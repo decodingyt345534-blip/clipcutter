@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="ur">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip Cutter</title>
+<style>
+  :root { --bg:#14171c; --panel:#1d222a; --line:#2e3540; --text:#e8ebf0; --mute:#8b95a5; --accent:#ffb020; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  p.sub { color: var(--mute); margin: 0 0 20px; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  input[type=file] { width: 100%; color: var(--text); }
+  video { width: 100%; border-radius: 8px; margin-top: 12px; display: none; background: #000; }
+  .row { display: flex; gap: 10px; align-items: end; margin-top: 12px; }
+  .row > div { flex: 1; }
+  label { display: block; font-size: .85rem; color: var(--mute); margin-bottom: 4px; }
+  input[type=number] { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 1rem; }
+  button { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: .9rem; cursor: pointer; }
+  button.main { width: 100%; margin-top: 14px; padding: 14px; background: var(--accent); color: #1a1200; border: 0; font-weight: 700; font-size: 1rem; }
+  button:disabled { opacity: .6; cursor: wait; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .chk { display: flex; gap: 8px; align-items: center; margin-top: 14px; color: var(--mute); font-size: .9rem; }
+  #msg { margin-top: 12px; color: var(--mute); min-height: 1.2em; }
+  #result { margin-top: 12px; }
+  #result a { color: var(--accent); }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .tab { flex: 1; padding: 12px; }
+  .tab.on { background: var(--accent); color: #1a1200; border-color: var(--accent); font-weight: 700; }
+  input[type=text] { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 1rem; }
+  .yp { width: 100%; aspect-ratio: 16 / 9; margin-top: 14px; background: #000; border-radius: 8px; overflow: hidden; }
+  .yp iframe { width: 100%; height: 100%; }
+  #ymsg { margin-top: 12px; color: var(--mute); min-height: 1.2em; }
+  #ylink { margin-top: 12px; word-break: break-all; }
+  #ylink a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Clip Cutter</h1>
+  <p class="sub">Apni video chunen, start/end set karein, aur original quality mein clip download karein. Sab kuch aap ke browser mein hota hai, video kisi server pe upload nahi hoti.</p>
+
+  <div class="tabs">
+    <button id="tabYT" type="button" class="tab on">YouTube link</button>
+    <button id="tabUp" type="button" class="tab">Apni file</button>
+  </div>
+
+  <div class="box" id="ytBox">
+    <label for="yurl">YouTube video link</label>
+    <input type="text" id="yurl" placeholder="https://www.youtube.com/watch?v=...">
+    <button class="main" id="yload" type="button">Video load karein</button>
+
+    <div id="yWrap" style="display:none">
+      <div id="yplayer" class="yp"></div>
+      <div class="row">
+        <div><label for="ys">Start (seconds)</label><input type="number" id="ys" min="0" step="1" value="0"></div>
+        <button id="ysetS" type="button">Abhi ka time</button>
+      </div>
+      <div class="row">
+        <div><label for="ye">End (seconds)</label><input type="number" id="ye" min="1" step="1" value="10"></div>
+        <button id="ysetE" type="button">Abhi ka time</button>
+      </div>
+      <button class="main" id="ymake" type="button">Clip link banayein</button>
+      <div id="ylink"></div>
+    </div>
+    <div id="ymsg"></div>
+  </div>
+
+  <div class="box" id="upBox" style="display:none">
+    <input type="file" id="file" accept="video/*">
+    <video id="v" controls playsinline></video>
+
+    <div class="row">
+      <div><label for="s">Start (seconds)</label><input type="number" id="s" min="0" step="0.01" value="0"></div>
+      <button id="setS" type="button">Abhi ka time</button>
+    </div>
+    <div class="row">
+      <div><label for="e">End (seconds)</label><input type="number" id="e" min="0" step="0.01" value="10"></div>
+      <button id="setE" type="button">Abhi ka time</button>
+    </div>
+
+    <label class="chk"><input type="checkbox" id="exact"> Exact cut (bohat slow, high-quality re-encode)</label>
+    <button class="main" id="go" type="button">Clip banayein</button>
+    <div id="msg"></div>
+    <div id="result"></div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const f = $('file'), v = $('v'), s = $('s'), e = $('e'), msg = $('msg'), go = $('go'), result = $('result');
+
+  f.onchange = () => {
+    if (!f.files[0]) return;
+    v.src = URL.createObjectURL(f.files[0]);
+    v.style.display = 'block';
+    result.innerHTML = '';
+  };
+  $('setS').onclick = () => { s.value = v.currentTime.toFixed(2); };
+  $('setE').onclick = () => { e.value = v.currentTime.toFixed(2); };
+
+  let ffmpeg = null;
+  async function loadFFmpeg() {
+    if (ffmpeg) return ffmpeg;
+    const { FFmpeg } = FFmpegWASM;
+    const { toBlobURL } = FFmpegUtil;
+    const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+    const workerURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js';
+    const instance = new FFmpeg();
+    instance.on('progress', ({ progress }) => {
+      if (progress > 0 && progress <= 1) msg.textContent = 'Clip ban rahi hai... ' + Math.round(progress * 100) + '%';
+    });
+    await instance.load({
+      coreURL: await toBlobURL(coreBase + '/ffmpeg-core.js', 'text/javascript'),
+      wasmURL: await toBlobURL(coreBase + '/ffmpeg-core.wasm', 'application/wasm'),
+      classWorkerURL: await toBlobURL(workerURL, 'text/javascript'),
+    });
+    ffmpeg = instance;
+    return ffmpeg;
+  }
+
+  go.onclick = async () => {
+    const file = f.files[0];
+    if (!file) { msg.textContent = 'Pehle video chunen.'; return; }
+    const start = parseFloat(s.value), end = parseFloat(e.value);
+    if (isNaN(start) || isNaN(end) || start < 0 || end <= start) {
+      msg.textContent = 'End time, start time se bara hona chahiye.';
+      return;
+    }
+
+    go.disabled = true;
+    result.innerHTML = '';
+    msg.textContent = 'Engine load ho raha hai (pehli baar thora time lagta hai)...';
+
+    try {
+      const ff = await loadFFmpeg();
+      const ext = (file.name.match(/\.[^.]+$/) || ['.mp4'])[0].toLowerCase();
+      const out = 'clip' + ext;
+
+      // Mount the file directly so large 4K files are not copied into memory
+      try { await ff.createDir('/in'); } catch (_) {}
+      try { await ff.unmount('/in'); } catch (_) {}
+      await ff.mount('WORKERFS', { files: [file] }, '/in');
+
+      const args = ['-ss', String(start), '-i', '/in/' + file.name, '-t', String(end - start)];
+      if ($('exact').checked) {
+        args.push('-c:v', 'libx264', '-crf', '14', '-preset', 'medium', '-c:a', 'aac', '-b:a', '192k');
+      } else {
+        args.push('-c', 'copy');
+      }
+      args.push(out);
+
+      msg.textContent = 'Clip ban rahi hai...';
+      const code = await ff.exec(args);
+      if (code !== 0) throw new Error('ffmpeg failed');
+
+      const data = await ff.readFile(out);
+      await ff.deleteFile(out);
+      await ff.unmount('/in');
+
+      const blob = new Blob([data.buffer], { type: file.type || 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = out;
+      a.textContent = 'Clip download karein';
+      result.appendChild(a);
+      a.click();
+      msg.textContent = 'Clip tayar hai.';
+    } catch (err) {
+      console.error(err);
+      msg.textContent = 'Clip nahi ban saki. Choti file ya mp4 format try karein.';
+    } finally {
+      go.disabled = false;
+    }
+  };
+</script>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+  // ---- Tabs ----
+  function showTab(name) {
+    const yt = name === 'yt';
+    $('ytBox').style.display = yt ? 'block' : 'none';
+    $('upBox').style.display = yt ? 'none' : 'block';
+    $('tabYT').classList.toggle('on', yt);
+    $('tabUp').classList.toggle('on', !yt);
+  }
+  $('tabYT').onclick = () => showTab('yt');
+  $('tabUp').onclick = () => showTab('up');
+
+  // ---- YouTube link mode (embed + shareable clip link, no download) ----
+  let yPlayer = null, apiReady = false, queued = null;
+
+  function onYouTubeIframeAPIReady() {
+    apiReady = true;
+    if (queued) { buildPlayer(queued.id, queued.s, queued.e, queued.auto); queued = null; }
+  }
+
+  function parseId(url) {
+    const m = url.match(/(?:youtu\.be\/|v=|\/shorts\/|\/embed\/|\/live\/)([A-Za-z0-9_-]{11})/);
+    return m ? m[1] : null;
+  }
+
+  function buildPlayer(id, s, e, auto) {
+    if (!apiReady) { queued = { id, s, e, auto }; return; }
+    if (yPlayer) { yPlayer.destroy(); yPlayer = null; }
+    $('yWrap').style.display = 'block';
+    $('yplayer').innerHTML = '<div id="yp-inner"></div>';
+    yPlayer = new YT.Player('yp-inner', {
+      videoId: id,
+      width: '100%',
+      height: '100%',
+      playerVars: { start: s, end: e, autoplay: auto ? 1 : 0, playsinline: 1, rel: 0 },
+      events: {
+        onError: (ev) => {
+          const c = ev.data;
+          let t = 'Video load nahi hui (error ' + c + ').';
+          if (c === 101 || c === 150) t = 'Is video ke owner ne embedding band rakhi hai, koi dusri video try karein.';
+          else if (c === 153) t = 'Site ko online (https) kholna parta hai. File se seedha kholne par YouTube player block kar deta hai.';
+          else if (c === 100) t = 'Video mojood nahi ya private hai.';
+          else if (c === 2) t = 'Link mein video ID sahi nahi hai.';
+          $('ymsg').textContent = t;
+        },
+      },
+    });
+    $('ys').value = s;
+    $('ye').value = e;
+    $('ylink').innerHTML = '';
+  }
+
+  let currentId = null;
+
+  $('yload').onclick = () => {
+    const id = parseId($('yurl').value.trim());
+    if (!id) { $('ymsg').textContent = 'Ye YouTube link sahi nahi lag raha.'; return; }
+    currentId = id;
+    $('ymsg').textContent = '';
+    if (location.protocol === 'file:') {
+      $('ymsg').textContent = 'Aap ne file seedha khol rakhi hai. YouTube player sirf online (https) site pe chalta hai, pehle GitHub Pages pe deploy karein.';
+    }
+    if (!apiReady) {
+      setTimeout(() => {
+        if (!apiReady) $('ymsg').textContent = 'YouTube ka player load nahi hua. Internet check karein, ya VPN/adblock band kar ke page refresh karein.';
+      }, 6000);
+    }
+    buildPlayer(id, 0, 10, false);
+  };
+
+  $('ysetS').onclick = () => { if (yPlayer) $('ys').value = Math.floor(yPlayer.getCurrentTime()); };
+  $('ysetE').onclick = () => { if (yPlayer) $('ye').value = Math.ceil(yPlayer.getCurrentTime()); };
+
+  $('ymake').onclick = () => {
+    if (!currentId || !yPlayer) return;
+    const s = parseInt($('ys').value, 10), e = parseInt($('ye').value, 10);
+    if (isNaN(s) || isNaN(e) || s < 0 || e <= s) {
+      $('ymsg').textContent = 'End time, start time se bara hona chahiye.';
+      return;
+    }
+    $('ymsg').textContent = '';
+    yPlayer.loadVideoById({ videoId: currentId, startSeconds: s, endSeconds: e });
+    const link = location.origin + location.pathname + '?v=' + currentId + '&s=' + s + '&e=' + e;
+    $('ylink').innerHTML = 'Clip ka link: <a href="' + link + '" target="_blank" rel="noopener">' + link + '</a> ';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = 'Copy';
+    copy.onclick = async () => {
+      try { await navigator.clipboard.writeText(link); copy.textContent = 'Copy ho gaya'; }
+      catch (_) { copy.textContent = 'Manually copy karein'; }
+    };
+    $('ylink').appendChild(copy);
+  };
+
+  // Open a shared clip link: ?v=VIDEOID&s=START&e=END
+  (function () {
+    const p = new URLSearchParams(location.search);
+    const id = p.get('v');
+    if (id && /^[A-Za-z0-9_-]{11}$/.test(id)) {
+      const s = parseInt(p.get('s'), 10) || 0;
+      const e = parseInt(p.get('e'), 10) || s + 10;
+      currentId = id;
+      $('yurl').value = 'https://www.youtube.com/watch?v=' + id;
+      buildPlayer(id, s, e, true);
+    }
+  })();
+</script>
+</body>
+</html>
